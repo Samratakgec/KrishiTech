@@ -9,8 +9,11 @@ import pandas as pd
 app = FastAPI()
 
 # Load the saved models
-model = joblib.load('crop_recommendation_model.pkl')
-
+try:
+    pipeline = joblib.load('crop_recommendation_model.pkl')
+except:
+    print("Warning: crop_recommendation_model.pkl not found. Model will be loaded when available.")
+    pipeline = None
 
 # Define the input data model using Pydantic
 class SoilData(BaseModel):
@@ -31,21 +34,33 @@ async def root():
 
 @app.post("/predictfarm")
 async def predict_farm_cap(soil_data: SoilData):
-    # Extracting data from the incoming request
-    input_data = np.array([[
-        soil_data.nitrogen, soil_data.phosphorous, soil_data.potassium,
-        soil_data.temperature, soil_data.humidity, soil_data.ph, soil_data.rainfall
-    ]])
+    if pipeline is None:
+        raise HTTPException(status_code=500, detail="Model not loaded. Please ensure crop_recommendation_model.pkl is available.")
+        
+    try:
+        # Create a DataFrame from the input data
+        input_data = pd.DataFrame([[
+            soil_data.nitrogen, soil_data.phosphorous, soil_data.potassium,
+            soil_data.temperature, soil_data.humidity, soil_data.ph, soil_data.rainfall
+        ]], columns=['N', 'P', 'K', 'temperature', 'humidity', 'ph', 'rainfall'])
 
-    # Preprocessing the input data
-    imputer = SimpleImputer(strategy='mean')
-    input_data_imputed = imputer.fit_transform(input_data)
-    scaler = StandardScaler()
-    input_data_scaled = scaler.fit_transform(input_data_imputed)
-
-    # Making a prediction
-    prediction = model.predict(input_data_scaled)
-    return {"prediction": "wheat"}
+        # Make prediction using the pipeline
+        prediction = pipeline.predict(input_data)
+        
+        return {
+            "recommended_crop": prediction[0],
+            "input_values": {
+                "nitrogen": soil_data.nitrogen,
+                "phosphorous": soil_data.phosphorous,
+                "potassium": soil_data.potassium,
+                "temperature": soil_data.temperature,
+                "humidity": soil_data.humidity,
+                "ph": soil_data.ph,
+                "rainfall": soil_data.rainfall
+            }
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error making prediction: {str(e)}")
 
 # Load the model and scaler
 model2, scaler2 = joblib.load('production_prediction_model_final.pkl')
